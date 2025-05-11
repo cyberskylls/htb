@@ -1,0 +1,181 @@
+
+**HTB - Planning 
+
+
+---
+
+**🛰****️ Introduction
+
+
+Target : 10.129.251.29 --> planning.htb
+Goal: Gain a root shell by exploiting a vulnerability in Grafana.
+Methodology: Classic CTF/pentest approach, progressing logically with image-by-image commentary.
+
+---
+
+![[Pasted image 20250511210144.png]]
+Two open ports detected:
+
+- **22** → SSH
+
+- **80** → HTTP (active web server) We proceed with web enumeration on port 80.
+
+
+---
+
+
+![[Pasted image 20250511210418.png]]
+
+A `grafana` subdomain is found with an HTTP 302 redirect. Strong indicator that Grafana is deployed.
+
+---
+
+![[Pasted image 20250511223659.png]]
+
+We add the subdomain to the /etc/hosts
+
+
+---
+
+![[Pasted image 20250511214501.png]]
+
+We verify the exact version of the vulnerable software on the login screen: **v11.0.0 (83b9528bce)**, which is affected by CVE-2024-9264.
+https://github.com/nollium/CVE-2024-9264
+
+---
+
+![[Pasted image 20250511210838.png]]
+
+HTB provides initial login credentials:
+
+·         **admin : 0D5oT70Fq13EvB5r** These are necessary to trigger CVE-2024-9264.
+
+---
+
+
+![[Pasted image 20250511210825.png]]
+
+
+The PoC works: we run the `id` command remotely through Grafana and DuckDB. Result: **root access!**
+
+---
+
+
+![[Pasted image 20250511211638.png]]
+This reverse shell connects back to our Kali machine on port 9001.
+
+---
+
+```
+python3 -m http.server 8000
+```
+
+We make a local python HTTP server for transfer the rev.sh.
+
+---
+
+
+![[Pasted image 20250511211708.png]]
+
+Download successful from our HTTP server.
+
+
+---
+
+![[Pasted image 20250511211834.png]]
+
+We execute the previously downloaded script, still via the Grafana exploit.
+
+
+---
+
+
+![[Pasted image 20250511211857.png]]
+
+Incoming connection from the target machine → confirmed root shell (`uid=0`). Exploitation succeeded.
+
+---
+
+![[Pasted image 20250511212730.png]]
+
+Inside the root shell, running `env` reveals sensitive Grafana environment variables including:
+
+- `GF_SECURITY_ADMIN_USER`
+    
+- `GF_SECURITY_ADMIN_PASSWORD` These values can be used to authenticate manually or reconfigure Grafana externally.
+
+---
+
+![[Pasted image 20250511213251.png]]
+
+We observe a login prompt showing a connection from our attack machine. We now know a user-level shell is possible via SSH.
+
+---
+
+![[Pasted image 20250511213715.png]]
+Running `netstat -tulpn` reveals several interesting services only bound to `127.0.0.1`, including:
+
+- `3000` (possibly another Grafana instance)
+    
+- `8000`, `13000`, `3306` (MySQL) These are candidates for local port forwarding.
+
+
+---
+
+We set up local port forwarding with:
+
+![[Pasted image 20250511213901.png]]
+
+This tunnels internal port 8000 to our local system, allowing remote access to a protected web interface.
+
+
+---
+
+![[Pasted image 20250511214006.png]]
+Navigating to `http://127.0.0.1:8000` prompts for HTTP Basic Auth, confirming that an admin interface or service is running internally.
+
+
+---
+
+![[Pasted image 20250511214205.png]]
+
+From user shell, we read `/opt/crontabs/crontab.db`, which contains JSON-based job definitions for scheduled tasks, including one named `Grafana backup`.
+
+
+---
+
+![[Pasted image 20250511214255.png]]
+
+We access the Crontab UI in the browser and see two defined jobs. This confirms control over the crontab interface.
+
+
+---
+We add a new job via Crontab UI:
+
+![[Pasted image 20250511215103.png]]
+
+This creates a root-owned SUID bash binary accessible by normal users.
+
+
+---
+Finally, we run:
+
+![[Pasted image 20250511215145.png]]
+
+This gives us a **persistent root shell**, bypassing the need for the previous exploit.
+
+
+---
+
+
+
+### ✅ Final Summary
+
+- Initial foothold: Grafana RCE → root
+    
+- Post-exploitation: SSH user access + Crontab job injection
+    
+- Persistence: SUID bash
+    
+- Internal service discovery through port forwarding
+
